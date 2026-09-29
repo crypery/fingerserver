@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="description" content="Fingerprint">
+<title>Fingerprint</title>
+<link href="css/bootstrap.css" rel="stylesheet">
+<script src="js/jquery.js"></script>
+<script src="js/bootstrap.js"></script>
+<script src="js/ua-parser.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"
+ integrity="sha512-xodZBNTC5n17Xt2atTPuE1HxjVMSvLVW9ocqUKLsCC5CXdbqCmblAshOMAS6/keqq/sMZMZ19scR4PsZChSR7A=="
+ crossorigin="" />
+<script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"
+ integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA=="
+ crossorigin=""></script>
+<style>
+#map {
+  width: 640px;
+  height: 480px;
+  border-radius: 4px;
+  box-shadow: 0 0 1px #222;
+}
+.icon {
+  color: #337ab7;
+  font-size: 24px;
+  transition: color 0.3s ease;
+}
+
+.icon:hover {
+  color: #d9534f;
+  cursor: pointer;
+}
+.blink {
+  animation: blinker 1s linear infinite;
+}
+
+@keyframes blinker {
+  50% {
+    opacity: 0.0;
+  }
+}
+</style>
+</head>
+<body>
+<div class="container">
+ <main>
+  <div class="py-5 text-center">
+      <h1>Anonymity is never a bad thing.</h1>
+      <p class="lead">Anonymity verification service that shows your browser fingerprints, TCP/IP and HTTPS connections, and identifies your country by IP address.</p>
+  </div>
+  <div class="px-4 pt-5 my-5 border-bottom">
+      <h1 class="display-4 fw-bold">HTTP User-Agent <span id="data_ua_refresh" class="glyphicon glyphicon-refresh icon" style="font-size: 15px;vertical-align: top;" aria-hidden="true"></span></h1></h1>
+      <p id="data_ua" class="lead mb-2">...</p>
+  </div>
+  <hr class="my-4">
+  <div class="px-4 pt-5 my-5 border-bottom">
+      <h1 class="display-4 fw-bold">JS User-Agent <span id="data_uajs_refresh" class="glyphicon glyphicon-refresh icon" style="font-size: 15px;vertical-align: top;" aria-hidden="true"></span></h1></h1>
+      <p id="data_uajs" class="lead mb-2">...</p>
+  </div>
+  <hr class="my-4">
+  <div class="px-4 pt-5 my-5 border-bottom">
+      <h1 class="display-4 fw-bold">IP Location <span id="data_loc_refresh" class="glyphicon glyphicon-refresh icon" style="font-size: 15px;vertical-align: top;" aria-hidden="true"></span></h1></h1>
+      <p id="data_loc" class="lead mb-2">...</p>
+  </div>
+  <hr class="my-4">
+  <div class="px-4 pt-5 my-5 border-bottom">
+      <h1 class="display-4 fw-bold">HTTPS Fingerprint <span id="data_https_refresh" class="glyphicon glyphicon-refresh icon" style="font-size: 15px;vertical-align: top;" aria-hidden="true"></h1></span>
+      <p id="data_https" class="lead mb-2">...</p>
+  </div>
+
+  <hr class="my-4">
+  <div class="px-4 pt-5 my-5 border-bottom">
+      <h1 class="display-4 fw-bold">TCP/IP Fingerprint <span id="data_tcp_refresh" class="glyphicon glyphicon-refresh icon" style="font-size: 15px;vertical-align: top;" aria-hidden="true"></span></h1>
+      <p id="data_tcp" class="lead mb-2">...</p>
+  </div>
+  <hr class="my-4">
+ </main>
+ <footer class="my-5 pt-5 text-muted text-center text-small">
+    <p class="mb-1">&copy; 2025  Fingerprint Company</p>
+    <ul class="list-inline">
+      <li class="list-inline-item"><a href="#">Privacy</a></li>
+      <li class="list-inline-item"><a href="#">Terms</a></li>
+      <li class="list-inline-item"><a href="#">Support</a></li>
+    </ul>
+ </footer>
+</div>
+<script>
+var map = null;
+var marker = null;
+var currentPosition = [0,0];
+function getMap(position, tooltip) {
+  if (map === null) {
+    map = L.map('map').setView(position, 15)
+  } else return
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution:
+      '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map)
+  L.marker(position).addTo(map).bindPopup(tooltip).openPopup()
+}
+
+$(document).ready(function() {
+
+  function startBlinking(idx) {
+	idx.addClass('blink');
+  }
+
+  function stopBlinking(idx) {
+	idx.removeClass('blink');
+  }
+
+  $('body').on('click', '#getmap', function() {
+     if ($('#map').is(':visible')) {
+       $('#map').hide();
+     } else {
+       $('#map').show();
+       getMap(currentPosition, 'You are here');
+     }
+ });
+ setTimeout(function() {
+     $.get("https://"+window.location.hostname+":443/tcp", function(data, status){
+        $("#data_tcp").html(data);
+     });
+     $.get("https://"+window.location.hostname+":443/loc", function(data, status){
+        $("#data_loc").html(data);
+     });
+     $.get("https://"+window.location.hostname+":443/ua", function(data, status){
+        $("#data_ua").html(data);
+     });
+     $.get("https://"+window.location.hostname+":4443/", function(data, status){
+        $("#data_https").html(data);        
+     });
+     const userAgentString = navigator.userAgent;
+     const parser = new UAParser();
+     parser.setUA(userAgentString);
+     const ua = parser.getResult();
+     res='';
+     res=res+'User-agent: '+userAgentString+'<br/>';
+     res=res+'Browser: '+ua.browser.name+' '+ua.browser.version+'<br/>';
+     res=res+'OS: '+ua.os.name+' '+ua.os.version+'<br/>';
+     $("#data_uajs").html(res);
+  }, 1000);
+
+  $("#data_ua_refresh").click(function() {
+       startBlinking($("#data_ua_refresh"));
+       $.get("https://"+window.location.hostname+":443/ua", function(data, status){
+          $("#data_ua").html(data);
+          stopBlinking($("#data_ua_refresh"));
+       });
+  });
+  $("#data_uajs_refresh").click(function() {
+       startBlinking($("#data_uajs_refresh"));
+       const userAgentString = navigator.userAgent;
+       const parser = new UAParser();
+       parser.setUA(userAgentString);
+       const ua = parser.getResult();
+       res='';
+       res=res+'User-agent: '+userAgentString+'<br/>';
+       res=res+'Browser: '+ua.browser.name+' '+ua.browser.version+'<br/>';
+       res=res+'OS: '+ua.os.name+' '+ua.os.version+'<br/>';
+       $("#data_uajs").html(res);
+       stopBlinking($("#data_uajs_refresh"));
+  });
+  $("#data_loc_refresh").click(function() {
+       startBlinking($("#data_loc_refresh"));
+       $.get("https://"+window.location.hostname+":443/loc", function(data, status){
+          $("#data_loc").html(data);
+          stopBlinking($("#data_loc_refresh"));
+       });
+  });
+  $("#data_https_refresh").click(function() {
+       startBlinking($("#data_https_refresh"));
+       $.get("https://"+window.location.hostname+":4443/", function(data, status){
+          $("#data_https").html(data);
+          stopBlinking($("#data_https_refresh"));
+       });
+  });
+  $("#data_tcp_refresh").click(function() {
+       startBlinking($("#data_tcp_refresh"));
+       $.get("https://"+window.location.hostname+":443/tcp", function(data, status){
+          $("#data_tcp").html(data);
+          stopBlinking($("#data_tcp_refresh"));
+       });
+  });
+});
+</script>
+</body>
+</html>

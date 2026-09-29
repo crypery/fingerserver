@@ -1,0 +1,164 @@
+# Fingerprint (echo-server)
+
+> [Russian version](README_RU.md)
+
+**Fingerprint** is a self-hosted anonymity verification service written in Go. It is a TLS/HTTP "echo" server that inspects every incoming connection and shows the visitor exactly what information can be observed about them from the network side: browser User-Agent, TLS fingerprint (JA3/JA4), raw TCP/IP parameters of the first SYN packet, and IP geolocation.
+
+The project is intended for privacy research, checking the quality of proxies/VPNs, and testing how well a client's identity leaks through the network stack. The web panel is a single page that displays all collected data in separate sections, each with its own refresh button.
+
+## Features
+
+- **JA3 and JA4 TLS fingerprinting** - the raw TLS ClientHello record is captured and converted into JA3 and JA4 fingerprints
+- **TCP/IP fingerprinting** - the first TCP SYN packet of the connection is captured at the network level (libpcap); the full IPv4 and TCP headers are displayed: TTL, IP ID, flags, window size, checksum, urgent pointer, and all IP/TCP options (MSS, window scale, timestamps, etc.)
+- **IP geolocation** - country, region, city, latitude/longitude, and ISP from the IP2Location binary database, with an interactive Leaflet/OpenStreetMap map
+- **User-Agent analysis** - the `User-Agent` header is parsed both server-side (Go) and client-side (ua-parser-js in the browser), so the two results can be compared for consistency
+- **Self-contained binary** - the web panel (HTML/CSS/JS/fonts) is embedded into the executable with go-bindata
+- **Two HTTPS listeners** - port 443 (standard `net/http` server: panel + data endpoints) and port 4443 (uTLS-based proxy that captures the ClientHello)
+- **Self-signed TLS certificate**, HTTP/1.1 only, keep-alives disabled
+- **Graceful shutdown** on SIGINT/SIGTERM
+- **Cross-compilation** for Windows and Linux (stripped, trimmed binaries)
+- **CLI flags**: `-list` (list capture devices), `-dev` (capture device index), `-ip` (bind address)
+
+## How it works
+
+### TLS fingerprinting (JA3 / JA4)
+
+The listener on port 4443 is a uTLS-based proxy (fingerproxy). It intercepts the TLS handshake and stores the raw ClientHello record in the request context. The record is then parsed (tlsx) and converted into:
+
+- **JA3** - MD5 digest of the ClientHello fields (TLS version, ciphers, extensions, elliptic curves, etc.)
+- **JA4** - the newer fingerprinting standard (type `t` for TLS), which additionally normalizes cipher suites and extensions
+
+The response returns both fingerprints. The TLS configuration is pinned to HTTP/1.1 (no h2), so the fingerprint reflects the client's pure TLS behavior.
+
+### TCP/IP fingerprinting
+
+A background goroutine captures packets with libpcap (gopacket) using a BPF filter: only TCP SYN packets (SYN=1, ACK=0) destined for the server IP on port 443. For each client endpoint (`ip:port`), the full IPv4 header (version, IHL, TOS, length, ID, flags, fragment offset, TTL, protocol, checksum, options) and TCP header (sequence, ack, data offset, window, checksum, urgent pointer, options) are stored in a bounded, TTL-expiring, thread-safe store.
+
+When the panel requests the `/tcp` endpoint, the handler waits (up to 3 seconds) for the capture goroutine to record the SYN of this very connection and returns the header as soon as it appears. The displayed fields are exactly those used for OS/network fingerprinting and those that privacy tools randomize: DF flag, IP ID, window size, reserved bits, urgent pointer, MSS.
+
+### IP geolocation
+
+The client IP (taken from the connection) is looked up in the IP2Location binary database (`IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP.BIN`) via binary search over IPv4/IPv6 ranges. The response includes country (long/short), region, city, coordinates, and ISP, plus a link that opens a Leaflet map with a marker at the client's coordinates.
+
+### User-Agent analysis
+
+The `/ua` endpoint parses the `User-Agent` header server-side with a regex-based parser and returns the browser name/version and OS name/version. The panel additionally parses the same string in the browser with ua-parser-js (the "JS User-Agent" section), so inconsistencies between the two results can be detected.
+
+## Technologies
+
+- **Go 1.24** - the entire server
+- **libpcap / gopacket** - live packet capture and IPv4/TCP decoding
+- **uTLS / fingerproxy / tlsx** - TLS ClientHello capture and JA3/JA4 computation
+- **IP2Location BIN** - binary geolocation database
+- **go-bindata** - embedding web assets into the binary
+- **Bootstrap 5, jQuery** - panel UI
+- **Leaflet 1.7.1 + OpenStreetMap** - geolocation map
+- **ua-parser-js** - client-side User-Agent parsing
+- **TLS 1.0-1.3** - the service works with all TLS versions; cipher suites and record versions serve as reference data for fingerprint analysis
+
+## Modules
+
+### Local modules (via `replace` in go.mod)
+
+| Module | Description |
+|---|---|
+| `data` | Generated by go-bindata. Embeds the web panel assets (HTML, CSS, JS, fonts) as gzip-compressed data inside the binary |
+| `ip2location` | Reader for IP2Location binary (.BIN) databases: binary search over IPv4/IPv6 ranges, returns country, region, city, ISP, coordinates, and other fields. Includes a `uint128` subpackage for 128-bit integer arithmetic for IPv6 |
+| `useragent` | Regex-based User-Agent parser (based on mileusna/useragent): extracts browser, OS, device type, and bot flags |
+
+### External dependencies
+
+| Module | Version | Description |
+|---|---|---|
+| `github.com/wi1dcard/fingerproxy` | v1.2.3 | TLS fingerprinting proxy: captures the raw ClientHello record into request metadata, computes JA3/JA4, provides a uTLS-based proxy server |
+| `github.com/dreadl0ck/tlsx` | v1.0.3 | Low-level TLS ClientHello parsing: unmarshals the raw record into structured fields |
+| `github.com/refraction-networking/utls` | v1.8.1 | uTLS - a TLS stack for client fingerprint analysis; provides the `dicttls` dictionary for human-readable cipher suite, extension, group, and signature algorithm names |
+| `github.com/google/gopacket` | v1.1.19 | Packet capture and decoding: `pcap` (libpcap) live capture, BPF filters, IPv4/TCP layer decoding |
+
+Indirect dependencies: `prometheus/client_golang` (metrics, pulled in by fingerproxy), `klauspost/compress`, `andybalholm/brotli`, `golang.org/x/{crypto,net,sys,text}`, `google.golang.org/protobuf`.
+
+## Requirements
+
+- Go 1.24.9+
+- A C compiler for cgo (the `pcap` package is not pure Go):
+  - Linux: `build-essential` (gcc)
+  - Windows: MinGW-w64 (e.g. TDM-GCC) with `gcc` on `PATH`
+- Packet capture library:
+  - Linux: `libpcap` (`libpcap-dev` for building)
+  - Windows: **Npcap** (recommended) or WinPcap - provides `wpcap.dll`
+- IP2Location binary database file `IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP.BIN` in the working directory
+- TLS certificate pair `localhost.crt` / `localhost.key` in the working directory
+- `go-bindata` (only when rebuilding embedded assets)
+
+## Build
+
+```sh
+# (optional) regenerate embedded panel assets after changing panel/
+go-bindata -pkg data -o data/data.go panel/...
+
+# build (requires CGO)
+CGO_ENABLED=1 go build -ldflags="-s -w" -trimpath -o echo-server
+```
+
+On Windows the output is `echo-server.exe`. Cross-compilation is done with `GOOS=linux` / `GOOS=windows` and `GOARCH=amd64` (see the project's build scripts).
+
+## Running
+
+### Linux
+
+```sh
+# install dependencies
+sudo apt-get install build-essential libpcap-dev
+
+# list capture devices (root is required for packet capture)
+sudo./echo-server -list
+
+# run: capture on device 0, bind to the server IP
+sudo./echo-server -dev 0 -ip 1.2.3.4
+```
+
+Packet capture requires root (or the `CAP_NET_RAW` capability).
+
+### Windows
+
+```bat
+:: 1. install Npcap (recommended) or WinPcap - provides wpcap.dll
+:: 2. run the terminal as Administrator, then list capture devices
+echo-server.exe -list
+
+:: 3. run: capture on device 0, bind to the server IP
+echo-server.exe -dev 0 -ip 1.2.3.4
+```
+
+Packet capture requires running the terminal as **Administrator**.
+
+## Usage
+
+```sh
+echo-server -list                 # list network capture devices
+echo-server -dev 0 -ip 1.2.3.4    # capture on device 0, bind to 1.2.3.4
+```
+
+| Port | Purpose |
+|---|---|
+| 443 | Web panel; endpoints `/ua` (User-Agent), `/loc` (geolocation), `/tcp` (TCP/IP fingerprint) |
+| 4443 | TLS fingerprint echo: JA3 and JA4 of the client's ClientHello |
+
+Example checks:
+
+```sh
+curl -k https://<ip>:443/ua
+curl -k https://<ip>:4443/
+```
+
+## Note on local testing (`/tcp`)
+
+The `/tcp` endpoint works by capturing the client's SYN packet at the network level, so the SYN must physically traverse the captured interface:
+
+- **Testing from the same machine does not work.** Connections to `127.0.0.1` or to the host's own IP are delivered through the loopback path and never traverse a physical NIC, so the capture sees nothing and `/tcp` returns an empty result. This is expected behavior, not a bug.
+- **Windows: WinPcap cannot capture loopback traffic or Hyper-V virtual adapters** (WSL, VMs using vSwitch networking). Even a "remote" client such as WSL will not be captured. **Npcap** is recommended (enable *Loopback support* at install time); it is ABI-compatible with WinPcap (`wpcap.dll`) and requires no code changes.
+- To test `/tcp`, connect from **another machine** on the network (or from a VM using a bridged network adapter) so that the SYN arrives at the captured NIC from the wire.
+
+## License
+
+GNU AGPL v3 (Affero GPL)
